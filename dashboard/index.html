@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c1f24; --muted:#6b7280; --grid:#e5e7eb;
+          --down:#2563eb; --up:#16a34a; --ping:#d97706; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1a1e24; --text:#e8eaed; --muted:#9aa3af; --grid:#2a3038; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; }
+  header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+  h1 { font-size:20px; margin:0; }
+  #status { font-size:13px; color:var(--muted); }
+  .stats { display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:16px; }
+  .charts { display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); }
+  @media (max-width:520px) { .charts { grid-template-columns:1fr; } body { padding:16px; } }
+  .card { background:var(--card); border-radius:12px; padding:16px; }
+  .label { font-size:13px; color:var(--muted); }
+  .value { font-size:28px; font-weight:600; margin-top:4px; }
+  .unit { font-size:14px; color:var(--muted); font-weight:400; }
+  .chart { height:260px; position:relative; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Network dashboard</h1>
+  <span id="status">Connecting…</span>
+</header>
+
+<div class="stats">
+  <div class="card"><div class="label">Download (live)</div>
+    <div class="value"><span id="down">–</span> <span class="unit">Mbps</span></div></div>
+  <div class="card"><div class="label">Upload (live)</div>
+    <div class="value"><span id="up">–</span> <span class="unit">Mbps</span></div></div>
+  <div class="card"><div class="label">Latency</div>
+    <div class="value"><span id="ping">–</span> <span class="unit">ms</span></div></div>
+  <div class="card"><div class="label">Last speed test</div>
+    <div class="value" id="st" style="font-size:20px">–</div>
+    <div class="label" id="stTime"></div></div>
+</div>
+
+<div class="charts">
+  <div class="card"><div class="label">Live throughput (last 5 min)</div>
+    <div class="chart"><canvas id="live"></canvas></div></div>
+  <div class="card"><div class="label">Latency (last 10 min)</div>
+    <div class="chart"><canvas id="pingChart"></canvas></div></div>
+  <div class="card"><div class="label">Speed test history</div>
+    <div class="chart"><canvas id="tests"></canvas></div></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+Chart.defaults.color = cssVar('--muted');
+Chart.defaults.borderColor = cssVar('--grid');
+
+function makeChart(id, series, yTitle, showPoints = false) {
+  return new Chart($(id), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: series.map(s => ({
+        label: s.label, data: [],
+        borderColor: cssVar(s.color), backgroundColor: cssVar(s.color),
+        borderWidth: 2, tension: 0.25, pointRadius: showPoints ? 3 : 0
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: {
+        x: { ticks: { maxTicksLimit: 6 } },
+        y: { beginAtZero: true, title: { display: true, text: yTitle } }
+      },
+      plugins: { legend: { display: series.length > 1 } }
+    }
+  });
+}
+
+const liveChart = makeChart('live',
+  [{ label: 'Download', color: '--down' }, { label: 'Upload', color: '--up' }], 'Mbps');
+const pingChart = makeChart('pingChart', [{ label: 'Latency', color: '--ping' }], 'ms');
+const testChart = makeChart('tests',
+  [{ label: 'Download', color: '--down' }, { label: 'Upload', color: '--up' }], 'Mbps', true);
+
+const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour12: false });
+const stamp = t => new Date(t * 1000).toLocaleString([],
+  { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+
+// Append a point and drop the oldest once the window is full
+function push(chart, label, values, max) {
+  chart.data.labels.push(label);
+  values.forEach((v, i) => chart.data.datasets[i].data.push(v));
+  if (chart.data.labels.length > max) {
+    chart.data.labels.shift();
+    chart.data.datasets.forEach(d => d.data.shift());
+  }
+}
+
+function onLive(s, redraw = true) {
+  push(liveChart, clock(s.t), [s.down, s.up], 300);
+  $('down').textContent = s.down.toFixed(1);
+  $('up').textContent = s.up.toFixed(1);
+  if (redraw) liveChart.update('none');
+}
+function onPing(p, redraw = true) {
+  push(pingChart, clock(p.t), [p.ms], 120);
+  $('ping').textContent = p.ms == null ? '--' : p.ms.toFixed(0);
+  if (redraw) pingChart.update('none');
+}
+function onTest(r, redraw = true) {
+  push(testChart, stamp(r.t), [r.down, r.up], 100);
+  $('down').textContent = r.down.toFixed(1);
+  $('up').textContent = r.up.toFixed(1);
+  $('st').textContent = `↓ ${r.down.toFixed(0)} / ↑ ${r.up.toFixed(0)} Mbps`;
+  $('stTime').textContent = stamp(r.t);
+  if (redraw) testChart.update('none');
+}
+
+async function init() {
+  try {
+    const h = await (await fetch('/api/history')).json();
+    h.live.forEach(s => onLive(s, false));
+    h.ping.forEach(p => onPing(p, false));
+    h.speedtests.forEach(r => onTest(r, false));
+    [liveChart, pingChart, testChart].forEach(c => c.update('none'));
+  } catch (e) { console.error('history load failed', e); }
+
+  const es = new EventSource('/stream');
+  es.addEventListener('live', e => onLive(JSON.parse(e.data)));
+  es.addEventListener('ping', e => onPing(JSON.parse(e.data)));
+  es.addEventListener('speedtest', e => onTest(JSON.parse(e.data)));
+  es.onopen = () => $('status').textContent = 'Connected';
+  es.onerror = () => $('status').textContent = 'Reconnecting…';
+}
+init();
+</script>
+</body>
+</html>
