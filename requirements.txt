@@ -1,0 +1,6 @@
+starlette
+uvicorn
+httpx
+# Optional: live interface counters on desktop (Windows/macOS/Linux).
+# Not needed on Android; the app falls back to speed-test mode automatically.
+# psutil
